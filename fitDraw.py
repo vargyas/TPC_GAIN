@@ -77,10 +77,10 @@ def createMapHisto(name):
     Creates the mapping histogram
     """
 
-    hMap = TH2F(name, "", 225, -0.5, 224.5, 161, -0.5, 160.5)
+    hMap = TH2F(name, "", 224, -0.5, 223.5, 160, -0.5, 159.5)
     return hMap
 
-def processMap(inputFileName, outputFolderName):
+def processMap(inputFileName):
     """
     Process ROOT TH2 histogram:
         - find mean and average value in each (x,y) point
@@ -89,12 +89,7 @@ def processMap(inputFileName, outputFolderName):
     """
 
     start = time.clock()
-
-    # try to make directory
-    try:
-        os.makedirs(outputFolderName)
-    except OSError:
-        pass
+    outputFolderName = os.path.dirname(os.path.realpath(inputFileName))
 
     # Preparing to save data to a tree (using array2tree later)
     fit_array_tmp = list()
@@ -120,14 +115,16 @@ def processMap(inputFileName, outputFolderName):
 
     c = TCanvas("c","",800,600)
 
+    ic = 0
     for gbin in range(len(hGainZ)):
-        # initialise, if fit succeeds will be assigned in the end of the loop
-        #fit_array_tmp.append((ixb, iyb, 0.0, 0.0, 0.0, 0.0, 0.0, 0))
-        #ic += 1
 
         ixb, iyb, izb = ROOT.Long(), ROOT.Long(), ROOT.Long()
         hGainXY.GetBinXYZ(gbin,ixb,iyb,izb)
-        #gbin = getBin(ixb, iyb)
+
+        # initialise, if fit succeeds will be assigned in the end of the loop
+        fit_array_tmp.append((ixb, iyb, 0.0, 0.0, 0.0, 0.0, 0.0, 0))
+        ic += 1
+
 
         # throw away small data
         peak_occ_init = getEntriesInRange( hGainZ[gbin], xmin+10, xmax-10 )
@@ -165,8 +162,8 @@ def processMap(inputFileName, outputFolderName):
         raw_occ  = getBinContent(gbin)
         peak_occ = getEntriesInRange(hGainZ[gbin], peak_mean-2.*peak_width, peak_mean+2.*peak_width)
 
-        #fit_array_tmp[ic - 1] = (ixb, iyb, peak_mean, peak_width, raw_occ, peak_occ, chi2, ndf)
-        fit_array_tmp.append( (ixb, iyb, peak_mean, peak_width, raw_occ, peak_occ, chi2, ndf) )
+        fit_array_tmp[ic - 1] = (ixb, iyb, peak_mean, peak_width, raw_occ, peak_occ, chi2, ndf)
+        #fit_array_tmp.append( (ixb, iyb, peak_mean, peak_width, raw_occ, peak_occ, chi2, ndf) )
 
 
     stop = time.clock()
@@ -183,21 +180,21 @@ def processMap(inputFileName, outputFolderName):
                                 ('ndf',np.int)
                                 ])
 
-    outFileName = outputFolderName+'/'+outputFolderName.split('/')[2]+'_tree.root'
+    outFileName = inputFileName.replace('.root','_tree.root')
     outFile = TFile(outFileName, "RECREATE")
     tree = array2tree(fit_array, "tree")
     outFile.Write()
     outFile.Close()
 
-def drawMap(inputFolderName):
+def drawMap(inputFileName):
     """
 
     """
 
-    infilename = inputFolderName+'/'+inputFolderName.split('/')[2]+'_tree.root'
+    inputFileName = inputFileName.replace('.root','_tree.root')
 
-    inFile = TFile.Open(infilename)
-    dirName = os.path.dirname(infilename)
+    inFile = TFile.Open(inputFileName)
+    dirName = os.path.dirname(inputFileName)
     tree = inFile.Get('tree')
     #tree.Print()
 
@@ -330,19 +327,12 @@ def calcOccInRange(h_occ, xmin, xmax):
 
 
 ### M A I N   P R O G R A M
-#input is foldername + run name
-#example IROC_14_a 127
-
-inputFileName = os.path.normpath(os.path.join(sys.argv[1],'data',sys.argv[2]))
-outputFolderName = os.path.normpath(os.path.join(sys.argv[1],'figs',sys.argv[2])).replace('GemQa2','')
-outputFolderName = outputFolderName.replace('.root','')
-
-print inputFileName
-print outputFolderName
+# input is mapfile.root
+# example: python fitDraw.py IROC_14_a/Run127/GemQa2Run127.root
 
 
 print ""
-#processMap(inputFileName, outputFolderName)
+processMap(sys.argv[1])
 print ""
-drawMap(outputFolderName)
+drawMap(sys.argv[1])
 print ""

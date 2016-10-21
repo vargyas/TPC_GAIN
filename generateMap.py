@@ -1,8 +1,7 @@
 ###################################################################
-### This macro reads the gain scan output and converts it to
-### an X-Y map, along with the adc values in each point.
-###
-### Input is the filename with path, creates the map in that folder
+### This macro reads the gain scan output (.ebe) and converts it to
+### an X-Y map ROOT file in the same directory, with the same name
+### as the input, along with the adc values in each point.
 ###
 ### Author: Vargyas, Marton
 ### Email: mvargyas@cern.ch
@@ -25,14 +24,12 @@ import time
 ROOT.gROOT.SetBatch(True)
 
 
-
 def createMapHisto(name):
     """
     Creates the mapping histogram
     """
 
-    hMap = TH2F(name, "", 225, -0.5, 224.5, 161, -0.5, 160.5)
-    # hMap = TH2F(name,"",112, 55.5, 167.5,160, -0.5, 159.5)
+    hMap = TH2F(name, "", 224, -0.5, 223.5, 160, -0.5, 159.5)
     return hMap
 
 
@@ -70,9 +67,9 @@ def generateMap(fileName):
     aGainADC = []
     hGainZ = []
 
-    for igbin in range((hGainXY.GetNbinsX()+1) * (hGainXY.GetNbinsY()+1)):
-        aGainADC.append(array('f'))
-        hGainZ.append(TH1D("hGainZ_{}".format(igbin), "", 1000, 0.5, 1000.5))
+    #for igbin in range((hGainXY.GetNbinsX()) * (hGainXY.GetNbinsY())):
+    #    aGainADC.append(array('f'))
+    #    hGainZ.append(TH1D("hGainZ_{}".format(igbin), "", 1000, 0.5, 1000.5))
 
     getXbin = hGainXY.GetXaxis().FindBin
     getYbin = hGainXY.GetYaxis().FindBin
@@ -82,15 +79,11 @@ def generateMap(fileName):
 
     with open(fileName) as f:
         lines = f.readlines()
-        print 'Processing file: {}'.format(fileName)
+        print 'Processing file: {}'.format(outFileName)
         nl = len(lines)
-
-        # printProgress(0, nl, prefix = loadStr, suffix = 'complete', barLength = 50)
 
         start = time.clock()
         for il in range(nl):
-
-            # printProgress(il, nl, prefix = loadStr, suffix = 'complete', barLength = 50)
 
             xarrl = []
             yarrl = []
@@ -167,9 +160,13 @@ def generateMap(fileName):
             ybin = getYbin(y)
             hGainXYFill(x, y)
 
-            gbin = getBin(xbin, ybin) # gbin starts from 0!
-            hGainZ[gbin].Fill(adc)
-            aGainADC[gbin].append(adc)
+            gbin = getBin(xbin, ybin) #- 2*160 - 4
+            if gbin<1: continue # exlude underflow bins
+            if gbin>=160*224: continue
+            #print x, xbin, y, ybin, gbin
+
+            #hGainZ[gbin].Fill(adc)
+            #aGainADC[gbin].append(adc)
             pass
 
     outFile.Write()
@@ -235,10 +232,6 @@ def findCluster(xl, xr, yl, yr):
         y = -1
 
     return x, y
-
-
-
-
 
 ### M A I N   P R O G R A M
 print ""
