@@ -14,23 +14,20 @@ init_mean = 440
 init_width = 100
 adc_pedestal = [2792, 2780, 2801, 2790]
 
-from ROOT import TF1, TH1D, TH2F, TFile
-import ROOT
+# from ROOT import TF1, TH1D, TH2F, TFile
+#import ROOT
 from array import array
+import numpy as np
 import sys
 import time
 
+
 # save a little time with not drawing the canvas
-ROOT.gROOT.SetBatch(True)
+# ROOT.gROOT.SetBatch(True)
 
 
-def createMapHisto(name):
-    """
-    Creates the mapping histogram
-    """
-
-    hMap = TH2F(name, "", 224, -0.5, 223.5, 160, -0.5, 159.5)
-    return hMap
+def getGlobalIndex(x, y):
+    return 224*y + x
 
 
 def getNextIndex(words, prev_index):
@@ -56,30 +53,13 @@ def generateMap(fileName):
     """
 
     print 'generating map from: ', fileName
-    outFileName = fileName.replace('.ebe', '.root')
-    outFile = TFile(outFileName, "RECREATE")
 
-    hGainXY = createMapHisto("hGainXY")
-    hDoubleCounted = createMapHisto("hDoubleCounted")
-    # hGainXY.Rebin2D(2,2)
-    # hGainXY.RebinX(2); hGainXY.RebinY(2)
-
-    aGainADC = []
-    hGainZ = []
-
-    #for igbin in range((hGainXY.GetNbinsX()) * (hGainXY.GetNbinsY())):
-    #    aGainADC.append(array('f'))
-    #    hGainZ.append(TH1D("hGainZ_{}".format(igbin), "", 1000, 0.5, 1000.5))
-
-    getXbin = hGainXY.GetXaxis().FindBin
-    getYbin = hGainXY.GetYaxis().FindBin
-    hGainXYFill = hGainXY.Fill
-    hDoubleCountedFill = hDoubleCounted.Fill
-    getBin = hGainXY.GetBin
+    aADC = []
+    for i in range(224 * 160):
+        aADC.append(array('f'))
 
     with open(fileName) as f:
         lines = f.readlines()
-        print 'Processing file: {}'.format(outFileName)
         nl = len(lines)
 
         start = time.clock()
@@ -133,9 +113,9 @@ def generateMap(fileName):
             x, y = findCluster(xl, xr, yl, yr)
 
             # fill the double counted histo
-            if x ==-2 and y ==-2:
-                hDoubleCountedFill(xl, yr)
-                hDoubleCountedFill(xr+112, yr)
+            # if x ==-2 and y ==-2:
+            #    hDoubleCountedFill(xl, yr)
+            #    hDoubleCountedFill(xr+112, yr)
 
             # only fill if both x and y are valid clusters
             if x < 0 or y < 0:
@@ -156,25 +136,29 @@ def generateMap(fileName):
             if which_adc == 0:
                 adc = 1.4 * adc
 
-            xbin = getXbin(x)
-            ybin = getYbin(y)
-            hGainXYFill(x, y)
+            x = int(x)
+            y = int(y)
+            gbin = getGlobalIndex(x, y)
+            aADC[gbin].append(adc)
 
-            gbin = getBin(xbin, ybin) #- 2*160 - 4
-            if gbin<1: continue # exlude underflow bins
-            if gbin>=160*224: continue
-            #print x, xbin, y, ybin, gbin
+        stop = time.clock()
+        print '\nProcessing file took [', stop - start, '] sec'
 
-            #hGainZ[gbin].Fill(adc)
-            #aGainADC[gbin].append(adc)
-            pass
+        outFileName = fileName.replace('.ebe', 'PREMAP.txt')
+        outFileName = outFileName.replace('GemQa2','')
+        print 'Saving map to: {}'.format(outFileName)
 
-    outFile.Write()
-    outFile.Close()
+        outF = open(outFileName, 'w+')
+        for ix in range(224):
+            for iy in range(160):
 
-    stop = time.clock()
-    print '\nProcessing file took [', stop - start, '] sec'
+                gbin = getGlobalIndex(ix, iy)
+                adc_str = ""
+                if len(aADC[gbin])>30:
+                    for iadc in aADC[gbin]:
+                        adc_str+=str(iadc)+"\t"
 
+                outF.writelines( ["{:d}\t{:d}\t{:d}\t{:s}\n".format(ix, iy, getGlobalIndex(ix,iy), adc_str)] )
 
 def findAdcIndex(x):
     """
@@ -193,14 +177,15 @@ def findAdcIndex(x):
 
 def findClusterPart(arr):
     """
-    Find cluster from short array
+    Find cluster (=continuous array)
+    from short array
     """
 
     mean = arr[0]
     # break if it is not continuous
     for i in range(len(arr) - 1):
         mean += arr[i + 1]
-        if arr[i] != arr[i + 1] - 1:
+        if arr[i]+1 != arr[i + 1]:
             return -1
     mean = float(mean) / float(len(arr))
     return mean
@@ -209,29 +194,39 @@ def findClusterPart(arr):
 def findCluster(xl, xr, yl, yr):
     """
     Find the valid cluster x or y
-    -1: valid, only one valid hit
+    > 0: valid, left of right
+    -1: not valid, only one valid hit
     -2: not valid, two valid hits
     """
 
+    x = -1
+    y = -1
+
+    # LEFT
     if xl > 0 and xr < 0:
-        x = xl
+        if yl > 0 and yr < 0:
+            x = xl
+            y = yl
+    # RIGHT
     elif xl < 0 and xr > 0:
-        x = xr + 112
+        if yl < 0 and yr > 0:
+            x = xr + 112
+            y = yr
     elif xl > 0 and xr > 0:
         x = -2
+        if yl > 0 and yr > 0:
+            y = -2
+        else:
+            y = -1
     else:
         x = -1
-
-    if yl > 0 and yr < 0:
-        y = yl
-    elif yl < 0 and yr > 0:
-        y = yr
-    elif yl > 0 and yr > 0:
-        y = -2
-    else:
-        y = -1
+        if yl > 0 and yr > 0:
+            y = -2
+        else:
+            y = -1
 
     return x, y
+
 
 ### M A I N   P R O G R A M
 print ""
