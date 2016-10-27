@@ -23,62 +23,26 @@ xmin = init_mean - 2.*init_width
 xmax = init_mean + 2.*init_width
 adc_pedestal = [2792, 2780, 2801, 2790]
 
-from ROOT import TF1, TH1D, TH2F, TTree, TCanvas, TPad, gStyle, TFile, TLegend, TLine
-import ROOT
+
 import os
-import warnings
-from root_numpy import array2tree
-from array import array
 import numpy as np
 import sys
 import time
+from scipy.stats import norm
+from scipy.stats import chisquare
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
+#import ROOT
+#from ROOT import *
+#from root_numpy import array2tree
+
 
 colors = [601, 634, 417, 433, 635, 619, 603, 636, 719, 435]
 
-# Save time with not drawing the pop-up canvases
-ROOT.gROOT.SetBatch(True)
 
 
-def createFoilContour():
-    """
-    Draws original foil contour
-    """
 
-    xs1 = 78
-    xs2 = 146
-    xl1 = 56
-    xl2 = 168
-    l = []
-    l.append( TLine(xs1, 2, xs2, 2) )
-    l.append( TLine(xl1, 160, xl2, 160) )
-    l.append( TLine(xl1, 160, xs1, 2) )
-    l.append( TLine(xs2, 2, xl2, 160) )
-
-    for il in l:
-        il.SetLineColor(1)
-        il.SetLineWidth(2)
-
-    return l
-
-def createSectorBound():
-    x = [56, 112, 168]
-    l=[]
-    for ix in x:
-        l.append( TLine( ix, 2, ix, 160) )
-    for il in l:
-        il.SetLineWidth(1)
-        il.SetLineColor(1)
-        il.SetLineStyle(9)
-
-    return l
-
-def createMapHisto(name):
-    """
-    Creates the mapping histogram
-    """
-
-    hMap = TH2F(name, "", 224, -0.5, 223.5, 160, -0.5, 159.5)
-    return hMap
 
 def processMap(inputFileName):
     """
@@ -89,83 +53,49 @@ def processMap(inputFileName):
     """
 
     start = time.clock()
-    outputFolderName = os.path.dirname(os.path.realpath(inputFileName))
+    #outputFolderName = os.path.dirname(os.path.realpath(inputFileName))
 
-    # Preparing to save data to a tree (using array2tree later)
     fit_array_tmp = list()
 
     # Read data from input file
-    inFile = TFile(inputFileName, "READ")
+    inFile = open(inputFileName, "r")
+    lines = inFile.readlines()
+    nl = len(lines)
 
-    # Bind certain methods for speedup (python feature)
-    hGainXY = inFile.Get("hGainXY")
-    hGainDouble = inFile.Get("hDoubleCounted")
-    #hGainXY.Add( hGainDouble )
-    getBinContent = hGainXY.GetBinContent
-
-    # Read gain peak histograms from file
-    hGainZ = []
-    igbin = 0
-    while inFile.GetListOfKeys().Contains("hGainZ_{}".format(igbin)):
-        hGainZ.append(inFile.Get("hGainZ_{}".format(igbin)))
-        hGainZ[igbin].Sumw2()
-        igbin += 1
-
-    fitf = TF1("fitf", "gaus", 0, 1000)
-
-    c = TCanvas("c","",800,600)
-
+    start = time.clock()
     ic = 0
-    for gbin in range(len(hGainZ)):
+    for il in range(nl):
+        words = lines[il].split()
+        x = words[0]
+        y = words[1]
+        gbin = words[2]
+        adc = words[3:]
+        mu = -1
+        std = -1
+        nraw = len(adc)
+        # Fill with garbage to have all points
+        fit_array_tmp.append((x, y, mu, std, nraw, 0.0, 0.0, 0))
 
-        ixb, iyb, izb = ROOT.Long(), ROOT.Long(), ROOT.Long()
-        hGainXY.GetBinXYZ(gbin,ixb,iyb,izb)
+        if len(adc)>30:
+            adcf = map(float, adc)
+            # Fit a normal distribution to the data:
+            mu, std = norm.fit(adcf)
 
-        # initialise, if fit succeeds will be assigned in the end of the loop
-        fit_array_tmp.append((ixb, iyb, 0.0, 0.0, 0.0, 0.0, 0.0, 0))
+            ndf = 1
+            xmin = mu-2*std
+            xmax = mu+2*std
+            # find occurence of values that are in +-2sigma off of the mean
+            npeak = 0
+            for iadc in adcf:
+                if iadc>xmin and iadc<xmax:
+                    npeak+=1
+
+            fit_array_tmp[ic] = (x, y, mu, std, nraw, npeak, 0, ndf)
+
         ic += 1
 
 
-        # throw away small data
-        peak_occ_init = getEntriesInRange( hGainZ[gbin], xmin+10, xmax-10 )
-        #peak_occ_init = hGainZ[gbin].GetEntries()-hGainZ[gbin].GetBinContent(0)-hGainZ[gbin].GetBinContent(hGainZ[gbin].GetNbinsX())
-        if peak_occ_init < 30:
-            continue
-
-        # throw away flat data
-        #if hGainZ[gbin].GetStdDev() > 75.:
-        #    continue
-
-        # fit peak histogram
-        fitf.SetParameters(0, init_mean, init_width)
-        hGainZ[gbin].Fit(fitf, 'RQ')
-        peak_mean = fitf.GetParameter(1)
-        peak_width = fitf.GetParameter(2)
-        chi2 = fitf.GetChisquare()
-        ndf = fitf.GetNDF()
-
-        #peak_mean = hGainZ[gbin].GetMean()
-        #peak_width = hGainZ[gbin].GetStdDev()
-
-        # throw away very suspicious fits
-        if peak_mean < 0: continue
-        if peak_mean > 2000: continue
-        if peak_width <= 0: continue
-
-        #hGainZ[gbin].Draw("")
-        #leg = TLegend(0.7, 0.5, 0.9, 0.7)
-        #leg.AddEntry(hGainZ[gbin], "[0],[1],[2]={:.3f}, {:.2f}, {:0.2f}".format(fitf.GetParameter(0),fitf.GetParameter(1),fitf.GetParameter(2)))
-        #leg.AddEntry(hGainZ[gbin], "#chi^2/NDF={:.2f}/{:.0f}".format(chi2,ndf))
-        #leg.Draw()
-        #c.SaveAs('figs/{}/peakfinder/peak_X{}Y{}.{}'.format(folderName,ixb,iyb,EXT[0]))
-
-        raw_occ  = getBinContent(gbin)
-        peak_occ = getEntriesInRange(hGainZ[gbin], peak_mean-2.*peak_width, peak_mean+2.*peak_width)
-
-        fit_array_tmp[ic - 1] = (ixb, iyb, peak_mean, peak_width, raw_occ, peak_occ, chi2, ndf)
-        #fit_array_tmp.append( (ixb, iyb, peak_mean, peak_width, raw_occ, peak_occ, chi2, ndf) )
-
-
+    pass
     stop = time.clock()
     print 'Generating map took [', stop - start, '] sec'
 
@@ -173,34 +103,43 @@ def processMap(inputFileName):
                          dtype=[('x', np.int),
                                 ('y', np.int),
                                 ('mean', np.float64),
-                                ('width', np.float64),
-                                ('raw_occ', np.float64),
-                                ('peak_occ', np.float64),
+                                ('sigma', np.float64),
+                                ('nraw', np.float64),
+                                ('npeak', np.float64),
                                 ('chi2',np.float64),
                                 ('ndf',np.int)
                                 ])
 
-    outFileName = inputFileName.replace('.root','_tree.root')
-    outFile = TFile(outFileName, "RECREATE")
-    tree = array2tree(fit_array, "tree")
-    outFile.Write()
-    outFile.Close()
+    outputFileName = inputFileName.replace('PREMAP.txt','MAP.txt')
+    np.savetxt(outputFileName, fit_array)
+
+    return outputFileName
+
+
+
+# DRAW MAP:
 
 def drawMap(inputFileName):
-    """
 
-    """
+    array = np.loadtxt(inputFileName, dtype={'names': ('x', 'y', 'mean', 'sigma', 'nraw', 'npeak', 'chi2', 'ndf'),
+                                   'formats': (float, float, float, float, float, float, float, float)})
 
-    inputFileName = inputFileName.replace('.root','_tree.root')
+    grid = array['nraw'].reshape(224, 160).T
+    plt.imshow(grid, extent=(0, 224, 160, 0),
+               interpolation='nearest', cmap=cm.rainbow)
+    plt.clim(30, 600)
+    plt.gca().invert_yaxis()
+    plt.colorbar()
+    plt.show()
+"""
+    tree = array2tree(array, 'tree')
 
-    inFile = TFile.Open(inputFileName)
+    tree.Print()
     dirName = os.path.dirname(inputFileName)
-    tree = inFile.Get('tree')
-    #tree.Print()
-
     # definition of a good cut
-    goodCut = '(chi2/ndf<2)&&'
-    goodCut+= '(width/mean<0.5)'
+    goodCut = ''
+
+
 
     c1 = TCanvas("c1", "c1", 1000, 1300)
     c1.Divide(2,3)
@@ -208,7 +147,7 @@ def drawMap(inputFileName):
     #gStyle.SetOptTitle(0)
 
     c1.cd(1)
-    tree.Draw("mean:x>>h1", goodCut+"&&mean>1", "scat")
+    tree.Draw("mean:x>>h1", "mean>1", "scat")
     h1=tree.GetHistogram()
     h1.GetXaxis().SetRangeUser(0, 224)
     h1.GetYaxis().SetRangeUser(0, 1000)
@@ -218,7 +157,7 @@ def drawMap(inputFileName):
     h1.Draw("scat")
 
     c1.cd(2)
-    tree.Draw("mean:y>>h2", goodCut+"&&mean>1", "scat")
+    tree.Draw("mean:y>>h2", "mean>1", "scat")
     h2=tree.GetHistogram()
     h2.GetXaxis().SetRangeUser(0, 160)
     h2.GetYaxis().SetRangeUser(0, 1000)
@@ -227,31 +166,27 @@ def drawMap(inputFileName):
     h2.GetXaxis().SetTitle("mean")
     h2.Draw("scat")
 
-
     c1.cd(3)
-    tree.Draw("mean", goodCut+"&&mean>1", "")
+    tree.Draw("mean", "", "")
 
     c1.cd(4)
-    tree.Draw("width/mean",goodCut+"&&width/mean>0","")
+    tree.Draw("sigma/mean","","")
 
     c1.cd(5)
-    tree.Draw("raw_occ>>h3", goodCut+'&&(raw_occ>3)', "goff")
+    tree.Draw("nraw>>h3", "nraw>0", "goff")
     h3=tree.GetHistogram()
     h3.GetXaxis().SetTitle("raw or peak occurence")
     h3.GetXaxis().SetRangeUser(3,1000)
     h3.SetLineColor(2)
     h3.Draw()
-    tree.Draw("peak_occ>>h4",goodCut+'&&(peak_occ>3)',"goff")
+    tree.Draw("npeak>>h4","npeak>0","goff")
     h4=tree.GetHistogram()
     h4.Draw("same")
 
-    xmin = 10; xmax = 700
-    efficiency = calcOccInRange(h4, xmin, xmax)/calcOccInRange(h3, xmin, xmax)*100.
     leg = TLegend(0.6,0.6,0.87,0.87)
     leg.SetBorderSize(0)
     leg.AddEntry(h3, "raw")
     leg.AddEntry(h4, "peak")
-    leg.AddEntry(None, "{:.1f}%".format(efficiency), "")
     leg.Draw()
     c1.Update()
 
@@ -265,41 +200,36 @@ def drawMap(inputFileName):
     tree.SetMarkerStyle(21)
     tree.SetMarkerSize(0.6)
 
-    meanrange = '&&mean>150&&mean<550'
-    tree.Draw("y:x:mean>>htemp",goodCut+"&&mean>1","colz")
+    tree.Draw("y:x:mean>>htemp","","colz")
     h = tree.GetHistogram()
     drawTreeMap(h, dirName, "mean")
 
-    tree.Draw("y:x:(width/mean)>>htemp", goodCut+"&&(width/mean)>0", "colz")
+    tree.Draw("y:x:(sigma/mean)>>htemp", "sigma/mean>0", "colz")
     h = tree.GetHistogram()
     drawTreeMap(h, dirName, "width")
 
-    tree.Draw("y:x:raw_occ>>htemp", "raw_occ>1", "colz")
+    tree.Draw("y:x:nraw>>htemp", "", "colz")
     h = tree.GetHistogram()
     drawTreeMap(h, dirName, "raw_occ")
 
-    tree.Draw("y:x:peak_occ>>htemp", goodCut+'&&(peak_occ>1)', "colz")
+    tree.Draw("y:x:npeak>>htemp", "", "colz")
     h = tree.GetHistogram()
     drawTreeMap(h, dirName, "peak_occ")
 
-    tree.Draw("y:x:chi2/ndf>>htemp", goodCut, "colz")
+    tree.Draw("y:x:chi2/ndf>>htemp", "chi2>0", "colz")
     h = tree.GetHistogram()
     drawTreeMap(h, dirName, "chi2ndf")
 
+"""
 
-def getEntriesInRange(h, xmin, xmax):
-    xbinmin = h.FindBin(xmin)
-    xbinmax = h.FindBin(xmax)
-    return h.Integral(xbinmin, xbinmax)
-
-
+"""
 def drawTreeMap(h, dir, name):
-    """
+
     Draws and saves given histogram
     :param h: histogram to save
     :param name: save name
     :return:
-    """
+
     c1 = TCanvas("c1", "c1", 1000, 1300)
     ROOT.gPad.SetRightMargin(0.15)
     gStyle.SetOptStat(0)
@@ -308,31 +238,21 @@ def drawTreeMap(h, dir, name):
     h.GetXaxis().SetRangeUser(50., 172.)
     h.GetYaxis().SetRangeUser(0., 161.)
     h.Draw("colz")
-    l = createFoilContour()
-    for il in l: il.Draw()
-    ls = createSectorBound()
-    for il in ls: il.Draw()
+    #l = createFoilContour()
+    #for il in l: il.Draw()
+    #ls = createSectorBound()
+    #for il in ls: il.Draw()
     for iext in EXT: c1.SaveAs('{}/{}.{}'.format(dir,name,iext))
 
-
-def calcOccInRange(h_occ, xmin, xmax):
-    ixmin = h_occ.FindBin(xmin)
-    ixmax = h_occ.FindBin(xmax)
-    h_occ_GetX = h_occ.GetBinCenter
-    h_occ_GetY = h_occ.GetBinContent
-    all = 0
-    for ib in range(ixmin, ixmax):
-        all += h_occ_GetX(ib) * h_occ_GetY(ib)
-    return all
-
+"""
 
 ### M A I N   P R O G R A M
 # input is mapfile.root
-# example: python fitDraw.py IROC_14_a/Run127/GemQa2Run127.root
+# example: python fitDraw.py IROC_14_a/Run127/Run127PREMAP.txt
 
 
 print ""
-processMap(sys.argv[1])
+outname = processMap(sys.argv[1])
 print ""
-drawMap(sys.argv[1])
+drawMap(outname)
 print ""
