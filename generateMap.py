@@ -1,7 +1,8 @@
 ###################################################################
-### This macro reads the gain scan output (.ebe) and converts it to
-### an X-Y map ROOT file in the same directory, with the same name
-### as the input, along with the adc values in each point.
+### This macro reads the gain scan output (.ebe) and generates
+### X-Y map from it, with the ADC value array at each point.
+### fitDraw.py then finds the mean ADC values for each point
+### and draws them
 ###
 ### Author: Vargyas, Marton
 ### Email: mvargyas@cern.ch
@@ -14,21 +15,13 @@ init_mean = 440
 init_width = 100
 adc_pedestal = [2792, 2780, 2801, 2790]
 
-# from ROOT import TF1, TH1D, TH2F, TFile
-#import ROOT
+
 from array import array
-import numpy as np
 import sys
 import time
 
-
-# save a little time with not drawing the canvas
-# ROOT.gROOT.SetBatch(True)
-
-
 def getGlobalIndex(x, y):
     return 224*y + x
-
 
 def getNextIndex(words, prev_index):
     """
@@ -43,13 +36,9 @@ def getNextIndex(words, prev_index):
         next_index = prev_index + index_len + 1
     return next_index
 
-
 def generateMap(fileName):
     """
-    Load text file sent by the raspberry pi
-    into a ROOT TH2 histogram with basic pre-processing:
-        - rejecting separate clusters in one event
-        - save results to ROOT file
+    Collect the continuous ADC values
     """
 
     print 'generating map from: ', fileName
@@ -70,12 +59,14 @@ def generateMap(fileName):
             xarrr = []
             yarrr = []
             words = lines[il].split()
+            # get adc indices
             ixl_index = 3
             iyl_index = getNextIndex(words, ixl_index)
             ixr_index = getNextIndex(words, iyl_index)
             iyr_index = getNextIndex(words, ixr_index)
             iyr_index_up = getNextIndex(words, iyr_index)
 
+            # collect adc indices:
             # collect x left
             for ixl in range(ixl_index + 1, iyl_index):
                 xarrl.append(int(words[ixl]))
@@ -112,34 +103,34 @@ def generateMap(fileName):
             # decide here which will be kept
             x, y = findCluster(xl, xr, yl, yr)
 
-            # fill the double counted histo
-            # if x ==-2 and y ==-2:
-            #    hDoubleCountedFill(xl, yr)
-            #    hDoubleCountedFill(xr+112, yr)
-
             # only fill if both x and y are valid clusters
-            if x < 0 or y < 0:
-                continue
+            #if x < 0 or y < 0:
+            #    continue
 
             # get ADC index and value
             adc_all = words[iyr_index_up + 1:iyr_index_up + 1 + 4]
-            which_adc = findAdcIndex(x)
-            adc = float(adc_all[which_adc])
-            # for some reason half value is stored, correcting here
-            if which_adc == 1:
-                adc = 2. * adc
 
-            # subtract pedestal after the correction
-            adc = adc - adc_pedestal[which_adc]
+            for ix in range(2):
+                if x[ix] < 0 or y[ix] < 0:
+                    continue
 
-            # also this correction in the awk file
-            if which_adc == 0:
-                adc = 1.4 * adc
+                which_adc = findAdcIndex(x[ix])
+                adc = float(adc_all[which_adc])
+                # for some reason half value is stored, correcting here
+                if which_adc == 1:
+                    adc = 2. * adc
 
-            x = int(x)
-            y = int(y)
-            gbin = getGlobalIndex(x, y)
-            aADC[gbin].append(adc)
+                # subtract pedestal after the correction
+                adc = adc - adc_pedestal[which_adc]
+
+                # also this correction in the awk file
+                if which_adc == 0:
+                    adc = 1.4 * adc
+
+                X = int(x[ix])
+                Y = int(y[ix])
+                gbin = getGlobalIndex(X, Y)
+                aADC[gbin].append(adc)
 
         stop = time.clock()
         print '\nProcessing file took [', stop - start, '] sec'
@@ -191,7 +182,7 @@ def findClusterPart(arr):
     return mean
 
 
-def findCluster(xl, xr, yl, yr):
+def findCluster2(xl, xr, yl, yr):
     """
     Find the valid cluster x or y
     > 0: valid, left of right
@@ -226,6 +217,21 @@ def findCluster(xl, xr, yl, yr):
             y = -1
 
     return x, y
+
+def findCluster(xl, xr, yl, yr):
+    x=[-1,-1]
+    y=[-1,-1]
+
+    if xl>0:
+        if yl>0:
+            x[0]=xl; y[0]=yl
+    if xr>0:
+        if yr>0:
+            x[1]=xr + 112; y[1]=yr
+
+    return x, y
+
+
 
 
 ### M A I N   P R O G R A M
