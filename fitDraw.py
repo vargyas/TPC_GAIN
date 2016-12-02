@@ -11,18 +11,15 @@
 # to run on all data (depreciated):
 # for f in data/*root; do tmpName=${f##*/}; python fitDraw.py ${tmpName/.root/} ; done
 
-
-
-# set the extension of all figures
+# set the extensions of all figures
 EXT = ["png","pdf","eps"]
 
 # initial parameters (estimated based on past data)
 init_mean = 400
 init_width = 70
-xmin = init_mean - 2.*init_width
-xmax = init_mean + 2.*init_width
-adc_pedestal = [2792, 2780, 2801, 2790]
-
+xmin = init_mean - 2*init_width
+xmax = init_mean + 2*init_width
+adc_pedestal = [2792.0, 2780.0, 2801.0, 2790.0]
 
 import os
 import numpy as np
@@ -33,24 +30,18 @@ from scipy.stats import chisquare
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-#import ROOT
-#from ROOT import *
-#from root_numpy import array2tree
-
 
 colors = [601, 634, 417, 433, 635, 619, 603, 636, 719, 435]
 
-
-
-
-
 def processMap(inputFileName):
     """
-    Process ROOT TH2 histogram:
-        - find mean and average value in each (x,y) point
-        - plots the results
-        - save fit parameters in the map to a tree
+    - find mean and average value in each (x,y) point by Gaussian fit
+    - plots the results
+    - save fit parameters in the map to a tree
     """
+
+    # control whether to plot Gaussian fits
+    plotFitProcess = True
 
     start = time.clock()
     #outputFolderName = os.path.dirname(os.path.realpath(inputFileName))
@@ -66,9 +57,9 @@ def processMap(inputFileName):
     ic = 0
     for il in range(nl):
         words = lines[il].split()
-        x = words[0]
-        y = words[1]
-        gbin = words[2]
+        x = int(words[0])
+        y = int(words[1])
+        gbin = int(words[2])
         adc = words[3:]
         mu = -1
         std = -1
@@ -78,22 +69,41 @@ def processMap(inputFileName):
 
         if len(adc)>30:
             adcf = map(float, adc)
-            # Fit a normal distribution to the data:
-            mu, std = norm.fit(adcf)
+            mu = np.mean(adcf)
+            std= np.std(adcf)
+            # ESTIMATE RESULTS AND SLICE THE ARRAY
+            # OTHERWISE THE FIT PICKS UP ON OUTLIERS
+            xmin = mu - 2 * std
+            xmax = mu + 2 * std
 
+            adcf_sliced = [_ix for _ix in adcf if _ix>xmin and _ix<xmax]
+            # Fit a normal distribution to the data:
+            mu, std = norm.fit(adcf_sliced)
+        
             ndf = 1
             xmin = mu-2*std
             xmax = mu+2*std
             # find occurence of values that are in +-2sigma off of the mean
             npeak = 0
-            for iadc in adcf:
+            for iadc in adcf_sliced:
                 if iadc>xmin and iadc<xmax:
                     npeak+=1
 
             fit_array_tmp[ic] = (x, y, mu, std, nraw, npeak, 0, ndf)
+            
+            if plotFitProcess:
+                plt.clf()
+
+                count, bins, ignored = plt.hist(adcf_sliced, 30, normed=True)
+                plt.plot(bins, 1/(std * np.sqrt(2 * np.pi)) * np.exp( - (bins - mu)**2 / (2 * std**2) ), linewidth=2, color='r')
+                #p = norm.pdf(plot_x, mu, std)
+                #plt.plot(plot_x, p, 'k', linewidth=2)
+                title = "Fit results: mu = %.2f,  std = %.2f" % (mu, std)
+                plt.title(title)
+                plt.savefig("fig_fit/fit_X{}_Y{}.png".format(x, y))
+                #plt.show()
 
         ic += 1
-
 
     pass
     stop = time.clock()
@@ -107,7 +117,7 @@ def processMap(inputFileName):
                                 ('nraw', np.float64),
                                 ('npeak', np.float64),
                                 ('chi2',np.float64),
-                                ('ndf',np.int)
+                                ('ndf',np.float64)
                                 ])
 
     outputFileName = inputFileName.replace('PREMAP.txt','MAP.txt')
@@ -121,16 +131,50 @@ def processMap(inputFileName):
 
 def drawMap(inputFileName):
 
+    X = np.linspace(0,224,224)
+    Y = np.linspace(0,160,160)
+    XY = np.linspace(0, 224*160, 224*160)
+
+
     array = np.loadtxt(inputFileName, dtype={'names': ('x', 'y', 'mean', 'sigma', 'nraw', 'npeak', 'chi2', 'ndf'),
                                    'formats': (float, float, float, float, float, float, float, float)})
 
-    grid = array['nraw'].reshape(224, 160).T
-    plt.imshow(grid, extent=(0, 224, 160, 0),
-               interpolation='nearest', cmap=cm.rainbow)
-    plt.clim(30, 600)
-    plt.gca().invert_yaxis()
-    plt.colorbar()
+
+
+    grid = array['npeak'].reshape(224, 160).T
+
+    #plt.figure(figsize=(100,100))
+    #plt.imshow(grid, cmap=cm.rainbow, vmin=30,vmax=1600)
+    #plt.clim(50, 1600)
+    #plt.gca().invert_yaxis()
+    #plt.colorbar()
+    #plt.show()
+
+    hist=np.histogram(array['mean'])
+    plt.hist(array['mean'], bins=np.arange(0,550))
     plt.show()
+
+    '''
+    plt.scatter(array['x'], array['mean'], c = array['chi2'], cmap = cm.hsv)
+    plt.ylim(0, 1000)
+    plt.show()
+
+    ### create profile multifig
+    grid_size = (4, 2)
+
+    plt.subplot2grid(grid_size, (0,0), rowspan=3,colspan=1)
+    #plt.ylim(0, 1000)
+    plt.plot(array['nraw'])
+
+    plt.subplot2grid(grid_size, (0, 1), rowspan=3, colspan=1)
+    # plt.ylim(0, 1000)
+    plt.plot(array['npeak'])
+
+    plt.tight_layout()
+    plt.show()
+    '''
+    #plt.contour(array['x'], array['y'], array['mean'])
+    #plt.show()
 """
     tree = array2tree(array, 'tree')
 
@@ -255,4 +299,4 @@ print ""
 outname = processMap(sys.argv[1])
 print ""
 drawMap(outname)
-print ""
+#print ""
